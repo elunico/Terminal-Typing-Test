@@ -4,11 +4,6 @@ import random
 import requests
 import sys
 
-targets = [
-    # 'The quick brown fox jumps over the lazy dog.',
-    '''It is a truth universally acknowledged, that a single man in possession of a good fortune, must be in want of a wife.'''
-]
-
 with open('words.txt') as f:
     words = [i.strip() for i in f.readlines()]
 
@@ -53,7 +48,6 @@ def place_target(screen, target):
 
 
 def main():
-    # target = random.choice(targets)
     if len(sys.argv) == 1:
         sys.argv.append(20)
     target = ' '.join(random.choice(words) for i in range(int(sys.argv[1])))
