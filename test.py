@@ -1,3 +1,4 @@
+import argparse
 import curses
 import os
 import random
@@ -55,11 +56,23 @@ def place_target(screen, target):
         linecount += len(word) + 1
     return rets
 
+def parse_args():
+    ap = argparse.ArgumentParser()
+    ap.add_argument('-n', '--number', type=int, default=20, help='Number of words to type')
+    ap.add_argument('-l', '--length', type=int, default=-1, help='Max length of words to type or -1 for no limit')
+    args =  ap.parse_args()
+
+    if args.length < 1 and args.length != -1:
+        ap.error('length must be greater than 0 or -1')
+    if args.number < 1:
+        ap.error('number must be greater than 0')
+
+    return args
 
 def main():
-    if len(sys.argv) == 1:
-        sys.argv.append(20)
-    target = ' '.join(random.choice(words) for i in range(int(sys.argv[1])))
+    args = parse_args()
+    candidates = [word for word in words if len(word) <= args.length or args.length == -1]
+    target = ' '.join(random.choice(candidates) for i in range(args.number))
     all_word_count = len(target) / 5
     screen = curses_start()
     rets = place_target(screen, target)
