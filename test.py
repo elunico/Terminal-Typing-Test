@@ -70,70 +70,83 @@ def parse_args():
     return args
 
 def main():
-    args = parse_args()
-    candidates = [word for word in words if len(word) <= args.length or args.length == -1]
-    target = ' '.join(random.choice(candidates) for i in range(args.number))
-    all_word_count = len(target) / 5
-    screen = curses_start()
-    rets = place_target(screen, target)
-    screen.move(1, 0)
+    sentinel = object()
+    def interior():
+        args = parse_args()
+        candidates = [word for word in words if len(word) <= args.length or args.length == -1]
+        target = ' '.join(random.choice(candidates) for i in range(args.number))
+        all_word_count = len(target) / 5
+        screen = curses_start()
+        rets = place_target(screen, target)
+        screen.move(1, 0)
 
-    start = 0.0
-    user_data = ''
-    idx = 0
-    lc, line = 0, 1
-    kc = 0
-    try:
-        log(','.join([str(i) for i in rets]))
-        while idx < len(target):
-            ch = screen.getch()
-            if not start:
-                start = time.time()
-            if ch == 0x7f or ch == curses.KEY_BACKSPACE:
-                if lc > 0:
-                    screen.delch(line, lc - 1)
-                    idx -= 1
-                    kc -= 1
-                    lc -= 1
-                continue
-            kc += 1
-            if ch != ord(target[idx]):
-                screen.attrset(curses.color_pair(1))
-            else:
-                screen.attrset(curses.color_pair(2))
-            screen.addch(ch)
-            user_data += chr(ch)
-            idx += 1
-            lc += 1
+        start = 0.0
+        end = 0.0
+        user_data = ''
+        idx = 0
+        lc, line = 0, 1
+        kc = 0
+        try:
             log(','.join([str(i) for i in rets]))
-            log(str(lc))
-            log(str(line))
-            log('\n')
-            if line < len(rets) and lc == rets[line]:
-                lc = 0
-                line += 2
-                screen.move(line, 0)
+            while idx < len(target):
+                ch = screen.getch()
+                if not start:
+                    start = time.time()
+                if ch == ord('\t'):
+                    screen.clear()
+                    return sentinel
+                if ch == 0x7f or ch == curses.KEY_BACKSPACE:
+                    if lc > 0:
+                        screen.delch(line, lc - 1)
+                        idx -= 1
+                        kc -= 1
+                        lc -= 1
+                    continue
+                idx += 1
+                if idx >= len(target):
+                    end = time.time()
+                    raise KeyboardInterrupt
+                kc += 1
+                if ch != ord(target[idx-1]):
+                    screen.attrset(curses.color_pair(1))
+                else:
+                    screen.attrset(curses.color_pair(2))
+                screen.addch(ch)
+                user_data += chr(ch)
+                lc += 1
+                log(','.join([str(i) for i in rets]))
+                log(str(lc))
+                log(str(line))
+                log('\n')
+                if line < len(rets) and lc == rets[line]:
+                    lc = 0
+                    line += 2
+                    screen.move(line, 0)
 
-    except KeyboardInterrupt:
+        except KeyboardInterrupt:
+            pass
+
+        end = time.time() if not end else end
+        seconds = end - start
+        curses.endwin()
+        data = user_data.split(' ')
+        t = target.split(' ')
+        log([pair for pair in zip(data, t)])
+        errors = len([pair[0] != pair[1] for pair in zip(data, t) if pair[0] != pair[1]])
+        log(data)
+        log(t)
+        errors += abs(len(data) - len(t))
+        print('Keystrokes registered:'.rjust(23) + ' {}'.format(kc))
+        print('Words typed'.rjust(23) + ' {:.2f}'.format(all_word_count))
+        print('Seconds taken'.rjust(23) + ' {:.2f}'.format(seconds))
+        print('Chars per second'.rjust(23) + ' {:.2f}'.format((kc / seconds)))
+        print("Errors made".rjust(23) + ' {}'.format(errors))
+        print('WPM:'.rjust(23) + ' {:.2f}'.format(all_word_count / (seconds / 60)))
+        print('Adjusted WPM:'.rjust(23) + ' {:.2f}'.format((all_word_count / (seconds / 60)) - (errors / 5)))
+        return None
+
+    while interior():
         pass
-
-    end = time.time()
-    seconds = end - start
-    curses.endwin()
-    data = user_data.split(' ')
-    t = target.split(' ')
-    log([pair for pair in zip(data, t)])
-    errors = len([pair[0] != pair[1] for pair in zip(data, t) if pair[0] != pair[1]])
-    log(data)
-    log(t)
-    errors += abs(len(data) - len(t))
-    print('Keystrokes registered:'.rjust(23) + ' {}'.format(kc))
-    print('Words typed'.rjust(23) + ' {:.2f}'.format(all_word_count))
-    print('Seconds taken'.rjust(23) + ' {:.2f}'.format(seconds))
-    print('Chars per second'.rjust(23) + ' {:.2f}'.format((kc / seconds)))
-    print("Errors made".rjust(23) + ' {}'.format(errors))
-    print('WPM:'.rjust(23) + ' {:.2f}'.format(all_word_count / (seconds / 60)))
-    print('Adjusted WPM:'.rjust(23) + ' {:.2f}'.format((all_word_count / (seconds / 60)) - (errors / 5)))
 
 if __name__ == '__main__':
     main()
