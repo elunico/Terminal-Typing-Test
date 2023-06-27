@@ -94,7 +94,7 @@ def main():
     users = users.fetchall()
 
     def choose_player():
-        if os.environ['user_id']:
+        if 'user_id' in os.environ:
             return os.environ['user_id']
         result = d.menu(text='Choose your name', choices=[*zip([str(i[1]) for i in users], [str(i[0]) for i in users]), ('*', '<new user>')])
         if result[0] != 'ok':
