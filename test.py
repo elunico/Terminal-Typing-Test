@@ -1,5 +1,6 @@
 import argparse
 import curses
+import hashlib
 import os
 import random
 import subprocess
@@ -17,6 +18,15 @@ logfile = open('log.txt', 'w')
 
 class ViewScores(Exception):
     pass
+
+
+def safe_remove(map, keys):
+    for i in keys:
+        try:
+            del map[i]
+        except KeyError:
+            # why is this the only way to do this?
+            pass
 
 
 def log(msg):
@@ -93,9 +103,62 @@ def main():
     users = database.execute('select * from users')
     users = users.fetchall()
 
+    def new_password():
+        pw = d.passwordbox(text='Enter a password')[1]
+        salt = os.urandom(16)
+        hashed = hashlib.sha256()
+        hashed.update(pw.encode())
+        hashed.update(salt)
+        return hashed.digest(), salt
+
+    def check_password(hash, salt, attempt):
+        h = hashlib.sha256()
+        h.update(attempt.encode())
+        h.update(salt)
+        digest = h.digest()
+        if digest == hash:
+            return True
+        else:
+            return False
+
+    def attempt_authentication(user_id):
+        hash, salt = database.execute('select hash, salt from users where id=?', [user_id]).fetchone()
+        count = 5
+        while True:
+            pw = d.passwordbox(text="Password")
+
+            if pw[0] != 'ok':
+                safe_remove(os.environ, ['user_id', 'password'])
+                return choose_player()
+
+            correct = check_password(hash, salt, pw[1])
+
+            if not correct:
+                count -= 1
+                d.msgbox(text="Invalid password! {} attempts remaining".format(count))
+
+            if count <= 0:
+                return False
+            elif count > 0 and correct:
+                return True
+            else:
+                continue
+
     def choose_player():
         if 'user_id' in os.environ:
-            return os.environ['user_id']
+            user_id = os.environ['user_id']
+            if 'password' in os.environ:
+                hash, salt = database.execute('select hash, salt from users where id=?', [user_id]).fetchone()
+                if check_password(hash, salt, os.environ['password']):
+                    return user_id
+                elif attempt_authentication(user_id):
+                    return user_id
+                else:
+                    return None
+            elif attempt_authentication(user_id):
+                return user_id
+            else:
+                return None
         result = d.menu(text='Choose your name', choices=[*zip([str(i[1]) for i in users], [str(i[0]) for i in users]), ('*', '<new user>')])
         if result[0] != 'ok':
             return None
@@ -108,14 +171,17 @@ def main():
                 if name in users:
                     d.msgbox(text='That name already exists! Try again')
                 else:
-                    user = name
                     user_id = random_id()
-                    database.execute('insert into users (name, id) values (?, ?)', [name, user_id])
+                    hashed, salt = new_password()
+                    database.execute('insert into users (name, id, hash, salt) values (?, ?, ?, ?)', [name, user_id, hashed, salt])
                     database.commit()
                     return user_id
         else:
             user_id = result[1]
-            return user_id
+            if attempt_authentication(user_id):
+                return user_id
+            else:
+                return None
 
     def interior(user_id):
         args = parse_args()
@@ -171,15 +237,12 @@ def main():
                     line += 2
                     screen.move(line, 0)
         except ViewScores:
-            # result = d.menu(text='Choose your name', choices=[*zip([i[1] for i in users], [i[0] for i in users])])
-            # if result[0] != 'ok':
-            #     return None
-            # else:
-            #     user_id = result[1]
             scores = database.execute('select * from scores where user=?', [user_id]).fetchall()
             curses.endwin()
-            print('|'.join(['user'.ljust(15), 'keystrokes'.ljust(15), 'words_typed'.ljust(15), 's taken'.ljust(15), 'chars/s'.ljust(15), 'errs'.ljust(15), 'wpm'.ljust(15), 'awpm'.ljust(15), 'id']))
-            print('\n'.join(str('|'.join(list(str(round(j, 5)).rjust(15) for j in i))) for i in scores))
+            print('|'.join(['user'.ljust(11), 'keystrokes'.ljust(11), 'words typed'.ljust(11), 'sec taken'.ljust(11), 'chars/s'.ljust(11), 'errs'.ljust(11), 'wpm'.ljust(11), 'awpm'.ljust(11), 'id'.ljust(11), 'time'.ljust(11), ]))
+            for row in scores:
+                print(str('|'.join(list(str(round(j, 5)).rjust(11) for j in row[:-1]))), end='')
+                print('|' + time.ctime(row[-1]).rjust(11))
         except KeyboardInterrupt:
             end = time.time() if not end else end
             seconds = end - start
@@ -208,9 +271,9 @@ def main():
             print('WPM:'.rjust(23) + ' {:.2f}'.format(all_word_count / (seconds / 60)))
             print('Adjusted WPM:'.rjust(23) + ' {:.2f}'.format((all_word_count / (seconds / 60)) - (errors / 5)))
             database.execute('''
-            INSERT INTO scores (user, keystrokes, words_typed, seconds_taken, chars_per_second, errors_made, wpm, awpm, id) VALUES
-            (?, ?, ?, ?, ?, ?, ?, ?, ?)
-            ''', [user_id, kc, all_word_count, seconds, kc//seconds, errors, all_word_count/(seconds/60), (all_word_count / (seconds / 60)) - (errors / 5), random_id()])
+            INSERT INTO scores (user, keystrokes, words_typed, seconds_taken, chars_per_second, errors_made, wpm, awpm, id, time) VALUES
+            (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ''', [user_id, kc, all_word_count, seconds, kc//seconds, errors, all_word_count/(seconds/60), (all_word_count / (seconds / 60)) - (errors / 5), random_id(), time.time()])
             return None
 
     result = choose_player()
