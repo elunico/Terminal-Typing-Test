@@ -3,6 +3,7 @@ import curses
 import hashlib
 import os
 import random
+import string
 import subprocess
 import sys
 import time
@@ -76,8 +77,12 @@ def place_target(screen, target):
 
 def parse_args():
     ap = argparse.ArgumentParser()
-    ap.add_argument('-n', '--number', type=int, default=20, help='Number of words to type')
-    ap.add_argument('-l', '--length', type=int, default=-1, help='Max length of words to type or -1 for no limit')
+    ap.add_argument('-n', '--number', type=int, default=20,
+                    help='Number of words to type')
+    ap.add_argument('-l', '--length', type=int, default=-1,
+                    help='Max length of words to type or -1 for no limit')
+    ap.add_argument('--list', choices=["words", 'users', 'scores', *[f'words:{l}' for l in string.ascii_lowercase]], type=str, default=None, required=False,
+                    help='show a list of data. choices are "words", "users", "scores"')
     args = ap.parse_args()
 
     if args.length < 1 and args.length != -1:
@@ -96,11 +101,54 @@ def random_id():
 
 
 def main():
+    global words 
     sentinel = object()
 
-    d = dialog.Dialog()
+    try:
+        d = dialog.Dialog()
+    except dialog.ExecutableNotFound as e:
+        raise SystemError(
+            "You must install the dialog program for your system to continue\nTry sudo apt install dialog or brew install dialog") from e
 
-    users = database.execute('select * from users')
+
+    args = parse_args()
+    if args.list:
+        if args.list.startswith('words'):
+            if ':' in args.list: 
+                mode, sw = args.list.split(':')
+                words = [i for i in words if i.startswith(sw)]
+            d.msgbox(text='\n'.join(words), height=25, width=80)
+            return sentinel
+        elif args.list == 'users':
+            users = [('id','name')]
+            # users = []
+            users.extend(database.execute(
+                'select id, name from users').fetchall())
+            
+            d.msgbox(text='\n'.join(['\t'.join([str(id), name]) for id, name in users]), height=25, width=80)
+            return sentinel
+        elif args.list == 'scores':
+            scores = database.execute(
+                'select * from scores').fetchall()
+            if not scores:
+                d.msgbox(text='No scores found!')
+                return sentinel
+            d.msgbox(text='\n'.join(['|'.join(list(str(round(float(j), 2)).rjust(11)
+                                    for j in i[:-1])) + '|' + time.ctime(i[-1]) for i in scores]), height=25, width=80)
+            return sentinel
+        else:
+            d.msgbox(text='Invalid list choice')
+            return sentinel
+    
+    
+    
+    try:
+        users = database.execute('select * from users')
+    except sqlite3.OperationalError:
+        database.execute(
+            'create table users (name text, id int, hash text, salt text, primary key(id))')
+        users = database.execute('select * from users')
+
     users = users.fetchall()
 
     def new_password():
@@ -122,7 +170,12 @@ def main():
             return False
 
     def attempt_authentication(user_id):
-        hash, salt = database.execute('select hash, salt from users where id=?', [user_id]).fetchone()
+        try:
+            hash, salt = database.execute(
+            'select hash, salt from users where id=?', [user_id]).fetchone()
+        except TypeError:
+            d.msgbox(text=f'User ID "{user_id}" not found! Try again')
+            return False
         count = 5
         while True:
             pw = d.passwordbox(text="Password")
@@ -135,7 +188,8 @@ def main():
 
             if not correct:
                 count -= 1
-                d.msgbox(text="Invalid password! {} attempts remaining".format(count))
+                d.msgbox(
+                    text="Invalid password! {} attempts remaining".format(count))
 
             if count <= 0:
                 return False
@@ -148,7 +202,12 @@ def main():
         if 'user_id' in os.environ:
             user_id = os.environ['user_id']
             if 'password' in os.environ:
-                hash, salt = database.execute('select hash, salt from users where id=?', [user_id]).fetchone()
+                try:
+                    hash, salt = database.execute(
+                    'select hash, salt from users where id=?', [user_id]).fetchone()
+                except TypeError:
+                    d.msgbox(text=f'User ID "{user_id}" not found! Try again')
+                    return None
                 if check_password(hash, salt, os.environ['password']):
                     return user_id
                 elif attempt_authentication(user_id):
@@ -159,7 +218,8 @@ def main():
                 return user_id
             else:
                 return None
-        result = d.menu(text='Choose your name', choices=[*zip([str(i[1]) for i in users], [str(i[0]) for i in users]), ('*', '<new user>')])
+        result = d.menu(text='Choose your name', choices=[
+                        *zip([str(i[1]) for i in users], [str(i[0]) for i in users]), ('*', '<new user>')])
         if result[0] != 'ok':
             return None
         if result[1] == '*':
@@ -173,7 +233,8 @@ def main():
                 else:
                     user_id = random_id()
                     hashed, salt = new_password()
-                    database.execute('insert into users (name, id, hash, salt) values (?, ?, ?, ?)', [name, user_id, hashed, salt])
+                    database.execute('insert into users (name, id, hash, salt) values (?, ?, ?, ?)', [
+                                     name, user_id, hashed, salt])
                     database.commit()
                     return user_id
         else:
@@ -184,9 +245,11 @@ def main():
                 return None
 
     def interior(user_id):
-        args = parse_args()
-        candidates = [word for word in words if len(word) <= args.length or args.length == -1]
-        target = ' '.join(random.choice(candidates) for i in range(args.number))
+        nonlocal args 
+        candidates = [word for word in words if len(
+            word) <= args.length or args.length == -1]
+        target = ' '.join(random.choice(candidates)
+                          for i in range(args.number))
         all_word_count = len(target) / 5
         screen = curses_start()
         rets = place_target(screen, target)
@@ -237,11 +300,14 @@ def main():
                     line += 2
                     screen.move(line, 0)
         except ViewScores:
-            scores = database.execute('select * from scores where user=?', [user_id]).fetchall()
+            scores = database.execute(
+                'select * from scores where user=?', [user_id]).fetchall()
             curses.endwin()
-            print('|'.join(['user'.ljust(11), 'keystrokes'.ljust(11), 'words typed'.ljust(11), 'sec taken'.ljust(11), 'chars/s'.ljust(11), 'errs'.ljust(11), 'wpm'.ljust(11), 'awpm'.ljust(11), 'id'.ljust(11), 'time'.ljust(11), ]))
+            print('|'.join(['user'.ljust(11), 'keystrokes'.ljust(11), 'words typed'.ljust(11), 'sec taken'.ljust(
+                11), 'chars/s'.ljust(11), 'errs'.ljust(11), 'wpm'.ljust(11), 'awpm'.ljust(11), 'id'.ljust(11), 'time'.ljust(11), ]))
             for row in scores:
-                print(str('|'.join(list(str(round(j, 5)).rjust(11) for j in row[:-1]))), end='')
+                print(str('|'.join(list(str(round(j, 5)).rjust(11)
+                      for j in row[:-1]))), end='')
                 print('|' + time.ctime(row[-1]).rjust(11))
         except KeyboardInterrupt:
             end = time.time() if not end else end
@@ -259,17 +325,21 @@ def main():
             data = user_data.split(' ')
             t = target.split(' ')
             log([pair for pair in zip(data, t)])
-            errors = len([pair[0] != pair[1] for pair in zip(data, t) if pair[0] != pair[1]])
+            errors = len([pair[0] != pair[1]
+                         for pair in zip(data, t) if pair[0] != pair[1]])
             log(data)
             log(t)
             errors += abs(len(data) - len(t))
             print('Keystrokes registered:'.rjust(23) + ' {}'.format(kc))
             print('Words typed'.rjust(23) + ' {:.2f}'.format(all_word_count))
             print('Seconds taken'.rjust(23) + ' {:.2f}'.format(seconds))
-            print('Chars per second'.rjust(23) + ' {:.2f}'.format((kc / seconds)))
+            print('Chars per second'.rjust(23) +
+                  ' {:.2f}'.format((kc / seconds)))
             print("Errors made".rjust(23) + ' {}'.format(errors))
-            print('WPM:'.rjust(23) + ' {:.2f}'.format(all_word_count / (seconds / 60)))
-            print('Adjusted WPM:'.rjust(23) + ' {:.2f}'.format((all_word_count / (seconds / 60)) - (errors / 5)))
+            print('WPM:'.rjust(23) +
+                  ' {:.2f}'.format(all_word_count / (seconds / 60)))
+            print('Adjusted WPM:'.rjust(
+                23) + ' {:.2f}'.format((all_word_count / (seconds / 60)) - (errors / 5)))
             database.execute('''
             INSERT INTO scores (user, keystrokes, words_typed, seconds_taken, chars_per_second, errors_made, wpm, awpm, id, time) VALUES
             (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
